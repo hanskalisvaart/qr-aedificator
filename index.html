@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>QR aedificator</title>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
+<link rel="icon" type="image/x-icon" href="favicon.ico">
+<link rel="stylesheet" href="css/style.css">
+<script type="text/javascript" src="js/jquery.min.js"></script>
+<script type="text/javascript" src="js/qrcode.js"></script>
+</head>
+<body>
+<input id="text" class= "text-input" type="text" value="Text input"/><br />
+<div class="qr-code-grid">
+	<div id="qrcode1" class="qr-code"></div>
+	<div id="qrcode2" class="qr-code"></div>
+	<div id="qrcode3" class="qr-code"></div>
+	<div id="qrcode4" class="qr-code"></div>
+	<div id="qrcode5" class="qr-code"></div>
+	<div id="qrcode6" class="qr-code"></div>
+	<div id="qrcode7" class="qr-code"></div>
+	<div id="qrcode8" class="qr-code"></div>
+	<div id="qrcode9" class="qr-code"></div>
+	<div id="qrcode10" class="qr-code"></div>
+	<div id="qrcode11" class="qr-code"></div>
+	<div id="qrcode12" class="qr-code"></div>
+</div>
+  <div id="error-message" class="error-message">
+	<p>Input text is too long (maximum is 500 characters)</p>
+	<button id="close-button">Close</button>
+  </div>
+
+
+<script type="text/javascript">
+
+const qrcodes = [];
+for (let i = 1; i <= 12; i++) {
+  qrcodes.push(new QRCode(document.getElementById(`qrcode${i}`)));
+}
+
+function makeCode() {
+  const elText = document.getElementById("text");
+  const elErrorMessage = document.getElementById("error-message");
+  const elCloseButton = document.getElementById("close-button");
+  if (!elText.value) {
+    alert("Input a text");
+    elText.focus();
+    return;
+  }
+
+  if (elText.value.length > 500) {
+    elErrorMessage.style.display = "block";
+    elText.focus();
+	elCloseButton.addEventListener("click", function () {
+  elErrorMessage.style.display = "none";
+});
+    return;
+  }
+  elErrorMessage.style.display = "none";
+
+  qrcodes.forEach(qrcode => qrcode.makeCode(elText.value));
+}
+
+makeCode();
+
+$("#text").
+	on("blur", function () {
+		makeCode();
+	}).
+	on("keydown", function (e) {
+		if (e.keyCode == 13) {
+			makeCode();
+		}
+	});
+
+
+</script>
+</body>
