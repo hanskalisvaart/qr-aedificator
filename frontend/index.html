@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>QR Aedificator</title>
+    <link rel="stylesheet" href="./src/style.css"/>
+</head>
+<body>
+<div id="app">
+    <header>
+        <h1>QR Aedificator</h1>
+    </header>
+
+    <div id="controls">
+        <div id="type-selector">
+            <label for="qr-type">Type:</label>
+            <select id="qr-type">
+                <option value="text">Text</option>
+                <option value="url">URL</option>
+                <option value="wifi">WiFi</option>
+                <option value="vcard">vCard</option>
+                <option value="email">Email</option>
+                <option value="sms">SMS</option>
+                <option value="phone">Phone</option>
+                <option value="geo">Geo Location</option>
+                <option value="calendar">Calendar</option>
+                <option value="bitcoin">Bitcoin</option>
+            </select>
+        </div>
+
+        <div id="form-container"></div>
+
+        <button id="generate-btn">Generate</button>
+        <div id="export-bar" class="hidden">
+            <button id="save-png-btn">Save QR as PNG</button>
+            <button id="save-sheet-btn">Save 4×3 Sheet</button>
+            <button id="copy-content-btn">Copy Content</button>
+        </div>
+        <div id="notification" class="notification hidden">
+            <span id="notification-text"></span>
+        </div>
+    </div>
+
+    <div id="output">
+        <div id="qr-grid"></div>
+        <div id="content-display">
+            <label>Encoded content:</label>
+            <textarea id="content-text" readonly rows="3"></textarea>
+            <button id="copy-btn">Copy</button>
+        </div>
+    </div>
+
+    <div id="error-message" class="error-message hidden">
+        <p id="error-text"></p>
+        <button id="close-error">Close</button>
+    </div>
+</div>
+
+<script type="module">
+    import './src/style.css';
+    import {initTemplates} from './src/templates.js';
+    import {GenerateQR, SaveQRPNG, SaveSheetPNG, CopyContentToClipboard} from './wailsjs/go/main/App.js';
+
+    const state = {
+        currentType: 'text',
+        qrImageData: null
+    };
+
+    function init() {
+        const typeSelect = document.getElementById('qr-type');
+        const formContainer = document.getElementById('form-container');
+        const generateBtn = document.getElementById('generate-btn');
+        const qrGrid = document.getElementById('qr-grid');
+        const contentText = document.getElementById('content-text');
+        const copyBtn = document.getElementById('copy-btn');
+        const errorMessage = document.getElementById('error-message');
+        const errorText = document.getElementById('error-text');
+        const closeError = document.getElementById('close-error');
+
+        const templates = initTemplates();
+
+        for (let i = 0; i < 12; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'qr-cell';
+            const img = document.createElement('img');
+            img.alt = 'QR Code';
+            img.id = 'qr-img-' + i;
+            cell.appendChild(img);
+            qrGrid.appendChild(cell);
+        }
+
+        function showError(msg) {
+            errorText.textContent = msg;
+            errorMessage.classList.remove('hidden');
+        }
+
+        closeError.addEventListener('click', function () {
+            errorMessage.classList.add('hidden');
+        });
+
+        function switchType(type) {
+            state.currentType = type;
+            formContainer.innerHTML = templates[type]();
+        }
+
+        typeSelect.addEventListener('change', function () {
+            switchType(typeSelect.value);
+        });
+
+        function collectFields(type) {
+            const form = formContainer.querySelector('.qr-form');
+            if (!form) return {};
+            const inputs = form.querySelectorAll('[name]');
+            const fields = {};
+            inputs.forEach(function (input) {
+                if (input.type === 'checkbox') {
+                    fields[input.name] = input.checked ? 'true' : 'false';
+                } else {
+                    fields[input.name] = input.value;
+                }
+            });
+            return fields;
+        }
+
+        async function generate() {
+            const type = typeSelect.value;
+            const fields = collectFields(type);
+
+            try {
+                const resp = await GenerateQR({type: type, fields: fields});
+                if (resp.error) {
+                    showError(resp.error);
+                    return;
+                }
+                state.qrImageData = resp.image;
+                contentText.value = resp.content;
+                const src = 'data:image/png;base64,' + resp.image;
+                for (let i = 0; i < 12; i++) {
+                    const img = document.getElementById('qr-img-' + i);
+                    img.src = src;
+                    img.alt = 'QR Code';
+                }
+            } catch (err) {
+                showError('Error: ' + err.message);
+            }
+        }
+
+        const exportBar = document.getElementById('export-bar');
+        const savePngBtn = document.getElementById('save-png-btn');
+        const saveSheetBtn = document.getElementById('save-sheet-btn');
+        const copyContentBtn = document.getElementById('copy-content-btn');
+        const notification = document.getElementById('notification');
+        const notificationText = document.getElementById('notification-text');
+
+        function notify(msg) {
+            notificationText.textContent = msg;
+            notification.classList.remove('hidden');
+            setTimeout(function () {
+                notification.classList.add('hidden');
+            }, 3000);
+        }
+
+        generateBtn.addEventListener('click', generate);
+
+        formContainer.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                generate();
+            }
+        });
+
+        savePngBtn.addEventListener('click', async function () {
+            if (!state.qrImageData) return;
+            try {
+                const path = await SaveQRPNG(state.qrImageData);
+                if (path) notify('Saved: ' + path);
+            } catch (err) {
+                showError('Save failed: ' + err.message);
+            }
+        });
+
+        saveSheetBtn.addEventListener('click', async function () {
+            const type = typeSelect.value;
+            const fields = collectFields(type);
+            try {
+                const path = await SaveSheetPNG({type: type, fields: fields}, 4, 3);
+                if (path) notify('Sheet saved: ' + path);
+            } catch (err) {
+                showError('Sheet save failed: ' + err.message);
+            }
+        });
+
+        copyContentBtn.addEventListener('click', async function () {
+            if (!contentText.value) return;
+            try {
+                await CopyContentToClipboard(contentText.value);
+                notify('Content copied to clipboard');
+            } catch (err) {
+                showError('Copy failed: ' + err.message);
+            }
+        });
+
+        copyBtn.addEventListener('click', function () {
+            contentText.select();
+            navigator.clipboard.writeText(contentText.value)
+                .catch(function () {
+                    document.execCommand('copy');
+                });
+        });
+
+        // wrap generate to show export bar after first generation
+        const origGenerate = generate;
+        generate = async function () {
+            await origGenerate();
+            if (state.qrImageData) {
+                exportBar.classList.remove('hidden');
+            }
+        };
+
+        switchType('text');
+    }
+
+    document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
