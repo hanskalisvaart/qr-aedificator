@@ -31,10 +31,51 @@
 
         <div id="form-container"></div>
 
+        <div id="options-bar">
+            <div class="option-group">
+                <label for="ecl">ECL:</label>
+                <select id="ecl">
+                    <option value="L">Low (L)</option>
+                    <option value="M" selected>Medium (M)</option>
+                    <option value="Q">Quartile (Q)</option>
+                    <option value="H">High (H)</option>
+                </select>
+            </div>
+            <div class="option-group">
+                <label for="qr-size">Size:</label>
+                <select id="qr-size">
+                    <option value="128">128px</option>
+                    <option value="256" selected>256px</option>
+                    <option value="384">384px</option>
+                    <option value="512">512px</option>
+                    <option value="768">768px</option>
+                    <option value="1024">1024px</option>
+                </select>
+            </div>
+            <div class="option-group">
+                <label for="fg-color">Foreground:</label>
+                <input type="color" id="fg-color" value="#000000">
+            </div>
+            <div class="option-group">
+                <label for="bg-color">Background:</label>
+                <input type="color" id="bg-color" value="#ffffff">
+            </div>
+            <div class="option-group">
+                <label for="use-logo">
+                    <input type="checkbox" id="use-logo">
+                    Logo
+                </label>
+                <button id="pick-logo-btn" class="small-btn">Select Image</button>
+                <div id="logo-preview" class="hidden"></div>
+            </div>
+        </div>
+
         <button id="generate-btn">Generate</button>
         <div id="export-bar" class="hidden">
             <button id="save-png-btn">Save QR as PNG</button>
+            <button id="save-svg-btn">Save QR as SVG</button>
             <button id="save-sheet-btn">Save 4×3 Sheet</button>
+            <button id="save-pdf-btn">Save Sheet as PDF</button>
             <button id="copy-content-btn">Copy Content</button>
         </div>
         <div id="notification" class="notification hidden">
@@ -51,6 +92,52 @@
         </div>
     </div>
 
+    <div id="decode-section">
+        <h2>Decode QR Code</h2>
+        <div id="decode-dropzone" class="dropzone">
+            <p>Drop a QR code image here, or click the button below</p>
+        </div>
+        <div id="decode-controls">
+            <button id="decode-pick-btn">Open Image &amp; Decode</button>
+        </div>
+        <div id="decode-result" class="hidden">
+            <label>Decoded content:</label>
+            <textarea id="decode-content" readonly rows="3"></textarea>
+            <div class="decode-actions">
+                <button id="decode-reencode-btn">Generate QR from this</button>
+                <button id="decode-copy-btn">Copy</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="history-section">
+        <h2>History</h2>
+        <div id="history-controls">
+            <input type="text" id="history-search" placeholder="Search history...">
+            <button id="history-refresh-btn">Refresh</button>
+            <button id="history-clear-btn">Clear All</button>
+        </div>
+        <div id="history-list"></div>
+    </div>
+    <div id="batch-section">
+        <h2>Batch Import (CSV)</h2>
+        <div id="batch-controls">
+            <button id="batch-pick-csv-btn">Pick CSV File</button>
+            <span id="batch-filename" class="batch-filename"></span>
+            <button id="batch-generate-btn" class="hidden">Generate All</button>
+        </div>
+        <div id="batch-preview" class="hidden">
+            <table id="batch-table">
+                <thead id="batch-thead"></thead>
+                <tbody id="batch-tbody"></tbody>
+            </table>
+            <p id="batch-row-count"></p>
+        </div>
+        <div id="batch-results" class="hidden">
+            <h3>Generated QR Codes</h3>
+            <div id="batch-grid"></div>
+        </div>
+    </div>
     <div id="error-message" class="error-message hidden">
         <p id="error-text"></p>
         <button id="close-error">Close</button>
@@ -60,11 +147,12 @@
 <script type="module">
     import './src/style.css';
     import {initTemplates} from './src/templates.js';
-    import {GenerateQR, SaveQRPNG, SaveSheetPNG, CopyContentToClipboard} from './wailsjs/go/main/App.js';
+    import {GenerateQR, GenerateQRWithLogo, SaveQRPNG, SaveSheetPNG, SaveQRSVG, SaveSheetPDF, CopyContentToClipboard, PickAndDecodeImage, DecodeQRFromBase64, PickLogoImage, GetHistory, ClearHistory, DeleteHistoryEntry, ParseCSV, PickCSVFile, GenerateBatch} from './wailsjs/go/main/App.js';
 
     const state = {
         currentType: 'text',
-        qrImageData: null
+        qrImageData: null,
+        logoBase64: null
     };
 
     function init() {
@@ -99,14 +187,100 @@
             errorMessage.classList.add('hidden');
         });
 
+        function createCustomDropdown(selectEl) {
+            if (!selectEl || selectEl.parentElement.classList.contains('custom-select')) return;
+
+            const container = document.createElement('div');
+            container.className = 'custom-select';
+
+            const trigger = document.createElement('button');
+            trigger.className = 'custom-select-trigger';
+            trigger.type = 'button';
+
+            const textSpan = document.createElement('span');
+            textSpan.className = 'custom-select-text';
+            const arrowSpan = document.createElement('span');
+            arrowSpan.className = 'custom-select-arrow';
+            arrowSpan.textContent = '\u25BC';
+
+            trigger.appendChild(textSpan);
+            trigger.appendChild(arrowSpan);
+
+            const optionsDiv = document.createElement('div');
+            optionsDiv.className = 'custom-select-options';
+
+            function updateTrigger() {
+                const opt = selectEl.options[selectEl.selectedIndex];
+                textSpan.textContent = opt ? opt.text : '';
+            }
+
+            function buildOptions() {
+                optionsDiv.innerHTML = '';
+                for (let i = 0; i < selectEl.options.length; i++) {
+                    const opt = selectEl.options[i];
+                    const optDiv = document.createElement('div');
+                    optDiv.className = 'custom-select-option';
+                    if (opt.selected) optDiv.classList.add('selected');
+                    optDiv.textContent = opt.text;
+                    optDiv.dataset.index = i;
+                    optDiv.addEventListener('click', function (e) {
+                        e.stopPropagation();
+                        const idx = parseInt(this.dataset.index);
+                        selectEl.selectedIndex = idx;
+                        selectEl.dispatchEvent(new Event('change', {bubbles: true}));
+                        updateTrigger();
+                        container.querySelectorAll('.custom-select-option').forEach(function (o) {
+                            o.classList.remove('selected');
+                        });
+                        this.classList.add('selected');
+                        container.classList.remove('open');
+                    });
+                    optionsDiv.appendChild(optDiv);
+                }
+            }
+
+            updateTrigger();
+            buildOptions();
+
+            trigger.addEventListener('click', function (e) {
+                e.stopPropagation();
+                container.classList.toggle('open');
+            });
+
+            document.addEventListener('click', function (e) {
+                if (!container.contains(e.target)) {
+                    container.classList.remove('open');
+                }
+            });
+
+            selectEl.addEventListener('change', function () {
+                updateTrigger();
+                const opts = optionsDiv.querySelectorAll('.custom-select-option');
+                opts.forEach(function (o, i) {
+                    o.classList.toggle('selected', i === selectEl.selectedIndex);
+                });
+            });
+
+            selectEl.style.display = 'none';
+            container.appendChild(trigger);
+            container.appendChild(optionsDiv);
+            selectEl.parentNode.insertBefore(container, selectEl);
+            container.appendChild(selectEl);
+        }
+
         function switchType(type) {
             state.currentType = type;
             formContainer.innerHTML = templates[type]();
+            formContainer.querySelectorAll('.qr-form select').forEach(createCustomDropdown);
         }
 
         typeSelect.addEventListener('change', function () {
             switchType(typeSelect.value);
         });
+
+        createCustomDropdown(document.getElementById('qr-type'));
+        createCustomDropdown(document.getElementById('ecl'));
+        createCustomDropdown(document.getElementById('qr-size'));
 
         function collectFields(type) {
             const form = formContainer.querySelector('.qr-form');
@@ -126,9 +300,17 @@
         async function generate() {
             const type = typeSelect.value;
             const fields = collectFields(type);
-
+            const ecl = document.getElementById('ecl').value;
+            const size = parseInt(document.getElementById('qr-size').value, 10);
+            const fgColor = document.getElementById('fg-color').value;
+            const bgColor = document.getElementById('bg-color').value;
             try {
-                const resp = await GenerateQR({type: type, fields: fields});
+                let resp;
+                if (useLogo.checked && state.logoBase64) {
+                    resp = await GenerateQRWithLogo({type: type, fields: fields, ecl: ecl, size: size, fgColor: fgColor, bgColor: bgColor}, state.logoBase64);
+                } else {
+                    resp = await GenerateQR({type: type, fields: fields, ecl: ecl, size: size, fgColor: fgColor, bgColor: bgColor});
+                }
                 if (resp.error) {
                     showError(resp.error);
                     return;
@@ -148,8 +330,13 @@
 
         const exportBar = document.getElementById('export-bar');
         const savePngBtn = document.getElementById('save-png-btn');
+        const saveSvgBtn = document.getElementById('save-svg-btn');
         const saveSheetBtn = document.getElementById('save-sheet-btn');
+        const savePdfBtn = document.getElementById('save-pdf-btn');
         const copyContentBtn = document.getElementById('copy-content-btn');
+        const useLogo = document.getElementById('use-logo');
+        const pickLogoBtn = document.getElementById('pick-logo-btn');
+        const logoPreview = document.getElementById('logo-preview');
         const notification = document.getElementById('notification');
         const notificationText = document.getElementById('notification-text');
 
@@ -180,14 +367,45 @@
             }
         });
 
+        saveSvgBtn.addEventListener('click', async function () {
+            const type = typeSelect.value;
+            const fields = collectFields(type);
+            const ecl = document.getElementById('ecl').value;
+            const fgColor = document.getElementById('fg-color').value;
+            const bgColor = document.getElementById('bg-color').value;
+            try {
+                const path = await SaveQRSVG({type: type, fields: fields, ecl: ecl, fgColor: fgColor, bgColor: bgColor});
+                if (path) notify('SVG saved: ' + path);
+            } catch (err) {
+                showError('SVG save failed: ' + err.message);
+            }
+        });
+
         saveSheetBtn.addEventListener('click', async function () {
             const type = typeSelect.value;
             const fields = collectFields(type);
+            const ecl = document.getElementById('ecl').value;
+            const fgColor = document.getElementById('fg-color').value;
+            const bgColor = document.getElementById('bg-color').value;
             try {
-                const path = await SaveSheetPNG({type: type, fields: fields}, 4, 3);
+                const path = await SaveSheetPNG({type: type, fields: fields, ecl: ecl, fgColor: fgColor, bgColor: bgColor}, 4, 3);
                 if (path) notify('Sheet saved: ' + path);
             } catch (err) {
                 showError('Sheet save failed: ' + err.message);
+            }
+        });
+
+        savePdfBtn.addEventListener('click', async function () {
+            const type = typeSelect.value;
+            const fields = collectFields(type);
+            const ecl = document.getElementById('ecl').value;
+            const fgColor = document.getElementById('fg-color').value;
+            const bgColor = document.getElementById('bg-color').value;
+            try {
+                const path = await SaveSheetPDF({type: type, fields: fields, ecl: ecl, fgColor: fgColor, bgColor: bgColor}, 4, 3);
+                if (path) notify('PDF saved: ' + path);
+            } catch (err) {
+                showError('PDF save failed: ' + err.message);
             }
         });
 
@@ -209,6 +427,101 @@
                 });
         });
 
+        // Logo picker
+        pickLogoBtn.addEventListener('click', async function () {
+            try {
+                const b64 = await PickLogoImage();
+                if (b64) {
+                    state.logoBase64 = b64;
+                    useLogo.checked = true;
+                    logoPreview.innerHTML = '<img src="data:image/png;base64,' + b64 + '">';
+                    logoPreview.classList.remove('hidden');
+                }
+            } catch (err) {
+                showError('Logo pick failed: ' + err.message);
+            }
+        });
+
+        useLogo.addEventListener('change', function () {
+            if (!useLogo.checked) {
+                logoPreview.classList.add('hidden');
+            } else if (state.logoBase64) {
+                logoPreview.classList.remove('hidden');
+            }
+        });
+
+        // Decode section
+        const decodeDropzone = document.getElementById('decode-dropzone');
+        const decodePickBtn = document.getElementById('decode-pick-btn');
+        const decodeResult = document.getElementById('decode-result');
+        const decodeContent = document.getElementById('decode-content');
+        const decodeReencodeBtn = document.getElementById('decode-reencode-btn');
+        const decodeCopyBtn = document.getElementById('decode-copy-btn');
+
+        function showDecodeResult(text) {
+            decodeContent.value = text;
+            decodeResult.classList.remove('hidden');
+        }
+
+        decodePickBtn.addEventListener('click', async function () {
+            try {
+                const text = await PickAndDecodeImage();
+                if (text) showDecodeResult(text);
+            } catch (err) {
+                showError('Decode failed: ' + err.message);
+            }
+        });
+
+        decodeDropzone.addEventListener('dragover', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            decodeDropzone.classList.add('dropzone-active');
+        });
+
+        decodeDropzone.addEventListener('dragleave', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            decodeDropzone.classList.remove('dropzone-active');
+        });
+
+        decodeDropzone.addEventListener('drop', async function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            decodeDropzone.classList.remove('dropzone-active');
+
+            const file = e.dataTransfer.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = async function (evt) {
+                const dataUrl = evt.target.result;
+                const base64 = dataUrl.split(',')[1];
+                try {
+                    const text = await DecodeQRFromBase64(base64);
+                    if (text) showDecodeResult(text);
+                } catch (err) {
+                    showError('Decode failed: ' + err.message);
+                }
+            };
+            reader.readAsDataURL(file);
+        });
+
+        decodeReencodeBtn.addEventListener('click', function () {
+            const text = decodeContent.value;
+            if (!text) return;
+            typeSelect.value = 'text';
+            switchType('text');
+            const textInput = document.querySelector('.qr-form input[name="text"]');
+            if (textInput) {
+                textInput.value = text;
+            }
+        });
+
+        decodeCopyBtn.addEventListener('click', function () {
+            decodeContent.select();
+            navigator.clipboard.writeText(decodeContent.value).catch(function () {});
+        });
+
         // wrap generate to show export bar after first generation
         const origGenerate = generate;
         generate = async function () {
@@ -217,6 +530,267 @@
                 exportBar.classList.remove('hidden');
             }
         };
+
+        // History section
+        const historyList = document.getElementById('history-list');
+        const historySearch = document.getElementById('history-search');
+        const historyRefreshBtn = document.getElementById('history-refresh-btn');
+        const historyClearBtn = document.getElementById('history-clear-btn');
+
+        function formatHistoryDate(dateStr) {
+            try {
+                const d = new Date(dateStr);
+                return d.toLocaleString();
+            } catch (_) {
+                return dateStr;
+            }
+        }
+
+        function truncateText(text, maxLen) {
+            if (text && text.length > maxLen) {
+                return text.substring(0, maxLen) + '...';
+            }
+            return text || '';
+        }
+
+        function renderHistory(entries) {
+            historyList.innerHTML = '';
+            if (!entries || entries.length === 0) {
+                const empty = document.createElement('p');
+                empty.className = 'history-empty';
+                empty.textContent = 'No history entries yet.';
+                historyList.appendChild(empty);
+                return;
+            }
+            for (const entry of entries) {
+                const card = document.createElement('div');
+                card.className = 'history-card';
+
+                const header = document.createElement('div');
+                header.className = 'history-card-header';
+
+                const typeLabel = document.createElement('span');
+                typeLabel.className = 'history-type';
+                typeLabel.textContent = entry.type || 'Unknown';
+
+                const dateSpan = document.createElement('span');
+                dateSpan.className = 'history-date';
+                dateSpan.textContent = formatHistoryDate(entry.createdAt);
+
+                header.appendChild(typeLabel);
+                header.appendChild(dateSpan);
+
+                const body = document.createElement('div');
+                body.className = 'history-card-body';
+                body.textContent = truncateText(entry.content, 120);
+
+                const actions = document.createElement('div');
+                actions.className = 'history-card-actions';
+
+                const loadBtn = document.createElement('button');
+                loadBtn.className = 'small-btn';
+                loadBtn.textContent = 'Load';
+                loadBtn.addEventListener('click', function () {
+                    if (entry.type && entry.content) {
+                        const typeVal = entry.type.toLowerCase();
+                        if (templates[typeVal]) {
+                            typeSelect.value = typeVal;
+                            switchType(typeVal);
+                            const form = formContainer.querySelector('.qr-form');
+                            if (form) {
+                                const inputs = form.querySelectorAll('[name]');
+                                if (inputs.length === 1 && inputs[0].name === 'text') {
+                                    inputs[0].value = entry.content;
+                                }
+                            }
+                        }
+                    }
+                });
+
+                const reGenBtn = document.createElement('button');
+                reGenBtn.className = 'small-btn';
+                reGenBtn.textContent = 'Regenerate';
+                reGenBtn.addEventListener('click', async function () {
+                    if (entry.type && entry.content) {
+                        const typeVal = entry.type.toLowerCase();
+                        if (templates[typeVal]) {
+                            typeSelect.value = typeVal;
+                            switchType(typeVal);
+                            const form = formContainer.querySelector('.qr-form');
+                            if (form) {
+                                const inputs = form.querySelectorAll('[name]');
+                                if (inputs.length === 1 && inputs[0].name === 'text') {
+                                    inputs[0].value = entry.content;
+                                }
+                            }
+                            await generate();
+                        }
+                    }
+                });
+
+                const delBtn = document.createElement('button');
+                delBtn.className = 'small-btn danger';
+                delBtn.textContent = 'Delete';
+                delBtn.addEventListener('click', async function () {
+                    try {
+                        await DeleteHistoryEntry(entry.id);
+                        loadHistory();
+                    } catch (err) {
+                        showError('Delete failed: ' + err.message);
+                    }
+                });
+
+                actions.appendChild(loadBtn);
+                actions.appendChild(reGenBtn);
+                actions.appendChild(delBtn);
+
+                card.appendChild(header);
+                card.appendChild(body);
+                card.appendChild(actions);
+                historyList.appendChild(card);
+            }
+        }
+
+        async function loadHistory() {
+            try {
+                const search = historySearch.value.trim() || '';
+                const entries = await GetHistory(search, 50, 0);
+                renderHistory(entries);
+            } catch (err) {
+                console.error('History load failed:', err);
+            }
+        }
+
+        historyRefreshBtn.addEventListener('click', loadHistory);
+
+        historyClearBtn.addEventListener('click', async function () {
+            if (!confirm('Clear all history entries?')) return;
+            try {
+                await ClearHistory();
+                loadHistory();
+            } catch (err) {
+                showError('Clear failed: ' + err.message);
+            }
+        });
+
+        let historySearchTimer;
+        historySearch.addEventListener('input', function () {
+            clearTimeout(historySearchTimer);
+            historySearchTimer = setTimeout(loadHistory, 300);
+        });
+
+        loadHistory();
+
+        // Batch CSV section
+        const batchPickBtn = document.getElementById('batch-pick-csv-btn');
+        const batchFilename = document.getElementById('batch-filename');
+        const batchPreview = document.getElementById('batch-preview');
+        const batchThead = document.getElementById('batch-thead');
+        const batchTbody = document.getElementById('batch-tbody');
+        const batchRowCount = document.getElementById('batch-row-count');
+        const batchGenerateBtn = document.getElementById('batch-generate-btn');
+        const batchResults = document.getElementById('batch-results');
+        const batchGrid = document.getElementById('batch-grid');
+        let currentCSVData = null;
+
+        batchPickBtn.addEventListener('click', async function () {
+            try {
+                const csvData = await PickCSVFile();
+                if (!csvData) return;
+                currentCSVData = csvData;
+                const fileName = 'CSV file loaded';
+                batchFilename.textContent = fileName;
+
+                const parsed = await ParseCSV(csvData);
+                if (parsed.error) {
+                    showError('CSV parse error: ' + parsed.error);
+                    return;
+                }
+
+                if (!parsed.rows || parsed.rows.length === 0) {
+                    showError('CSV has no data rows');
+                    return;
+                }
+
+                batchThead.innerHTML = '';
+                const headRow = document.createElement('tr');
+                for (const h of parsed.headers) {
+                    const th = document.createElement('th');
+                    th.textContent = h;
+                    headRow.appendChild(th);
+                }
+                batchThead.appendChild(headRow);
+
+                batchTbody.innerHTML = '';
+                const maxPreview = Math.min(parsed.rows.length, 50);
+                for (let i = 0; i < maxPreview; i++) {
+                    const tr = document.createElement('tr');
+                    for (const h of parsed.headers) {
+                        const td = document.createElement('td');
+                        td.textContent = parsed.rows[i][h] || '';
+                        tr.appendChild(td);
+                    }
+                    batchTbody.appendChild(tr);
+                }
+
+                batchRowCount.textContent = parsed.rows.length + ' rows loaded' + (parsed.rows.length > maxPreview ? ' (showing first ' + maxPreview + ')' : '');
+                batchPreview.classList.remove('hidden');
+                batchGenerateBtn.classList.remove('hidden');
+            } catch (err) {
+                showError('CSV pick failed: ' + err.message);
+            }
+        });
+
+        batchGenerateBtn.addEventListener('click', async function () {
+            if (!currentCSVData) return;
+            try {
+                const type = typeSelect.value;
+                const ecl = document.getElementById('ecl').value;
+                const size = parseInt(document.getElementById('qr-size').value, 10);
+                const fgColor = document.getElementById('fg-color').value;
+                const bgColor = document.getElementById('bg-color').value;
+
+                const results = await GenerateBatch(
+                    {type: type, fields: {}, ecl: ecl, size: size, fgColor: fgColor, bgColor: bgColor},
+                    currentCSVData
+                );
+
+                batchGrid.innerHTML = '';
+                batchResults.classList.remove('hidden');
+
+                for (const res of results) {
+                    const card = document.createElement('div');
+                    card.className = 'batch-result-card';
+
+                    if (res.error) {
+                        const errP = document.createElement('p');
+                        errP.className = 'batch-error';
+                        errP.textContent = 'Row ' + (res.index + 1) + ': ' + res.error;
+                        card.appendChild(errP);
+                    } else {
+                        const img = document.createElement('img');
+                        img.src = 'data:image/png;base64,' + res.image;
+                        img.alt = 'QR ' + (res.index + 1);
+                        img.className = 'batch-qr-img';
+                        card.appendChild(img);
+
+                        const label = document.createElement('span');
+                        label.className = 'batch-qr-label';
+                        label.textContent = '#' + (res.index + 1);
+                        card.appendChild(label);
+
+                        const contentP = document.createElement('p');
+                        contentP.className = 'batch-qr-content';
+                        contentP.textContent = res.content;
+                        card.appendChild(contentP);
+                    }
+
+                    batchGrid.appendChild(card);
+                }
+            } catch (err) {
+                showError('Batch generation failed: ' + err.message);
+            }
+        });
 
         switchType('text');
     }

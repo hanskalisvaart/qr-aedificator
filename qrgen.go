@@ -19,6 +19,10 @@ import (
 type QRRequest struct {
 	Type   string            `json:"type"`
 	Fields map[string]string `json:"fields"`
+	ECL    string            `json:"ecl"`
+	Size   int               `json:"size"`
+	FgColor string            `json:"fgColor"`
+	BgColor string            `json:"bgColor"`
 }
 
 type QRResponse struct {
@@ -27,26 +31,60 @@ type QRResponse struct {
 	Error   string `json:"error,omitempty"`
 }
 
+func parseECL(s string) qrcode.RecoveryLevel {
+	switch s {
+	case "L":
+		return qrcode.Low
+	case "M":
+		return qrcode.Medium
+	case "Q":
+		return qrcode.High
+	case "H":
+		return qrcode.Highest
+	default:
+		return qrcode.Medium
+	}
+}
+
 func (a *App) GenerateQR(req QRRequest) QRResponse {
 	content, err := formatContent(req.Type, req.Fields)
 	if err != nil {
 		return QRResponse{Error: err.Error()}
 	}
 
-	qr, err := qrcode.New(content, qrcode.Medium)
+	ecl := parseECL(req.ECL)
+	size := req.Size
+	if size <= 0 {
+		size = 256
+	}
+
+	qr, err := qrcode.New(content, ecl)
 	if err != nil {
 		return QRResponse{Error: fmt.Sprintf("QR generation failed: %v", err)}
 	}
 
-	png, err := qr.PNG(256)
+	if req.FgColor != "" || req.BgColor != "" {
+		qr.ForegroundColor = parseHexColor(req.FgColor, color.Black)
+		qr.BackgroundColor = parseHexColor(req.BgColor, color.White)
+	}
+
+	png, err := qr.PNG(size)
 	if err != nil {
 		return QRResponse{Error: fmt.Sprintf("PNG encoding failed: %v", err)}
 	}
 
-	return QRResponse{
+	resp := QRResponse{
 		Image:   base64.StdEncoding.EncodeToString(png),
 		Content: content,
 	}
+
+	if resp.Content != "" {
+		if err := a.AddToHistory(req, resp.Content); err != nil {
+			println("history error:", err.Error())
+		}
+	}
+
+	return resp
 }
 
 func formatContent(qrType string, fields map[string]string) (string, error) {
@@ -207,6 +245,76 @@ func formatContent(qrType string, fields map[string]string) (string, error) {
 	}
 }
 
+func (a *App) SaveQRSVG(req QRRequest) (string, error) {
+	content, err := formatContent(req.Type, req.Fields)
+	if err != nil {
+		return "", err
+	}
+
+	ecl := parseECL(req.ECL)
+	qr, err := qrcode.New(content, ecl)
+	if err != nil {
+		return "", fmt.Errorf("QR generation failed: %v", err)
+	}
+
+	if req.FgColor != "" || req.BgColor != "" {
+		qr.ForegroundColor = parseHexColor(req.FgColor, color.Black)
+		qr.BackgroundColor = parseHexColor(req.BgColor, color.White)
+	}
+
+	bitmap := qr.Bitmap()
+	n := len(bitmap)
+	moduleSize := 10
+	imgSize := n * moduleSize
+	padding := 4 * moduleSize
+	totalSize := imgSize + 2*padding
+
+	fg := "#000000"
+	if req.FgColor != "" {
+		fg = req.FgColor
+	}
+	bg := "#ffffff"
+	if req.BgColor != "" {
+		bg = req.BgColor
+	}
+
+	var svg strings.Builder
+	svg.WriteString(fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" width="%d" height="%d">`, totalSize, totalSize, totalSize, totalSize))
+	svg.WriteString(fmt.Sprintf(`<rect width="%d" height="%d" fill="%s"/>`, totalSize, totalSize, bg))
+
+	for y := 0; y < n; y++ {
+		for x := 0; x < n; x++ {
+			if bitmap[y][x] {
+				rx := padding + x*moduleSize
+				ry := padding + y*moduleSize
+				svg.WriteString(fmt.Sprintf(`<rect x="%d" y="%d" width="%d" height="%d" fill="%s"/>`, rx, ry, moduleSize, moduleSize, fg))
+			}
+		}
+	}
+
+	svg.WriteString(`</svg>`)
+
+	filePath, err := wailsRuntime.SaveFileDialog(a.ctx, wailsRuntime.SaveDialogOptions{
+		DefaultFilename: "qrcode.svg",
+		Title:           "Save QR Code as SVG",
+		Filters: []wailsRuntime.FileFilter{
+			{DisplayName: "SVG Image", Pattern: "*.svg"},
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("dialog failed: %v", err)
+	}
+	if filePath == "" {
+		return "", nil
+	}
+
+	if err := os.WriteFile(filePath, []byte(svg.String()), 0644); err != nil {
+		return "", fmt.Errorf("write failed: %v", err)
+	}
+
+	return filePath, nil
+}
+
 func (a *App) SaveQRPNG(base64Data string) (string, error) {
 	filePath, err := wailsRuntime.SaveFileDialog(a.ctx, wailsRuntime.SaveDialogOptions{
 		DefaultFilename: "qrcode.png",
@@ -240,9 +348,15 @@ func (a *App) SaveSheetPNG(req QRRequest, cols, rows int) (string, error) {
 		return "", err
 	}
 
-	qr, err := qrcode.New(content, qrcode.Medium)
+	ecl := parseECL(req.ECL)
+	qr, err := qrcode.New(content, ecl)
 	if err != nil {
 		return "", fmt.Errorf("QR generation failed: %v", err)
+	}
+
+	if req.FgColor != "" || req.BgColor != "" {
+		qr.ForegroundColor = parseHexColor(req.FgColor, color.Black)
+		qr.BackgroundColor = parseHexColor(req.BgColor, color.White)
 	}
 
 	qrPNG, err := qr.PNG(200)
@@ -298,6 +412,30 @@ func (a *App) SaveSheetPNG(req QRRequest, cols, rows int) (string, error) {
 	return filePath, nil
 }
 
+func parseHexColor(hex string, fallback color.Color) color.Color {
+	if hex == "" {
+		return fallback
+	}
+	hex = strings.TrimPrefix(hex, "#")
+	if len(hex) != 6 {
+		return fallback
+	}
+	var c struct{ r, g, b, a uint8 }
+	c.a = 255
+	fmt.Sscanf(hex, "%02x%02x%02x", &c.r, &c.g, &c.b)
+	return color.RGBA{c.r, c.g, c.b, c.a}
+}
+
 func (a *App) CopyContentToClipboard(text string) error {
 	return wailsRuntime.ClipboardSetText(a.ctx, text)
+}
+
+func (a *App) generateAndRecord(req QRRequest) QRResponse {
+	resp := a.GenerateQR(req)
+	if resp.Error == "" && resp.Content != "" {
+		if err := a.AddToHistory(req, resp.Content); err != nil {
+			println("history error:", err.Error())
+		}
+	}
+	return resp
 }
